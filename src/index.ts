@@ -1,8 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import express from "express";
-import { Request, Response } from "express";
+import dotenv from "dotenv";
 
+dotenv.config();
+
+const PORT = process.env.PORT || 4000;
 const app = express();
 const prisma = new PrismaClient();
 
@@ -56,21 +59,21 @@ async function sendMoney(from: string, to: string, amount: number) {
         const receiverBalance = receiver.balance ?? 0;
 
         // Update sender's balance
-        await prisma.userbankdetails.update({
+        const debited = await prisma.userbankdetails.update({
             where: { upiid: from },
             data: {
                 balance: new Decimal(senderBalance).minus(new Decimal(amount)),
             },
         });
-
+        console.log(`${from} account debited ${amount} with ${debited.balance} balance.`);
         // Update receiver's balance
-        await prisma.userbankdetails.update({
+        const credited = await prisma.userbankdetails.update({
             where: { upiid: to },
             data: {
                 balance: new Decimal(receiverBalance).plus(new Decimal(amount)),
             },
         });
-
+        console.log(`${to} account credited with ${amount} from ${from}.`);
         // Create the transaction history record
         await prisma.transaction.create({
             data: {
@@ -128,6 +131,16 @@ async function getUsers() {
     return users;
 }
 
+async function getUserBankBalance(upiid: string) {
+    const userBankDetails = await prisma.userbankdetails.findUnique({
+        where: {
+            upiid,
+        },
+    });
+
+    return userBankDetails?.balance;
+}
+
 app.post("/create-user", async (req, res) => {
     const { username, email, password } = req.body;
 
@@ -161,7 +174,8 @@ app.post("/send-money", async (req, res) => {
 
     try {
         await sendMoney(from, to, amount);
-        res.status(200).json({ message: "Transaction successful." });
+
+        res.status(200).json({ message: `${to} account successfully credited with amount: ${amount}. Transaction successful.` });
     } catch (err) {
         if (err instanceof Error) {
             console.error("Error sending money:", err.message);
@@ -214,6 +228,29 @@ app.get("/get-transaction-history", async (req, res) => {
     }
 });
 
-app.listen(3000, () => {
-    console.log("Server is running on port 3000");
+//@ts-ignore
+app.get("/get-user-balance", async (req, res) => {
+    const { upiid } = req.query;
+
+    if (typeof upiid !== 'string') {
+        return res.status(400).json({ error: "Invalid UPI ID." });
+    }
+
+    try {
+        const userBankDetails = await getUserBankBalance(upiid);
+        res.status(200).json(`$${userBankDetails}, user bank balance fetched successfully.`);
+    } catch (err) {
+        if (err instanceof Error) {
+            console.error("Error getting user balance:", err.message);
+        } else {
+            console.error("Error getting user balance:", err);
+        }
+        res.status(500).json({
+            error: "An error occurred while getting the user balance.",
+        });
+    }
+});
+
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
